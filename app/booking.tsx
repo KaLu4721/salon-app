@@ -48,20 +48,20 @@ export default function Booking() {
   }
 
   function jeLiZauzeto(vreme: string) {
-    const noviPocetak = vremeUMinute(vreme)
-    const noviKraj = noviPocetak + trajanjeMin
+  const noviPocetak = vremeUMinute(vreme)
+  const noviKraj = noviPocetak + trajanjeMin
 
-    return zauzetiTermini.some((t) => {
-      const postojeciPocetak = vremeUMinute(
-        new Date(t.datum_vreme).toTimeString().slice(0, 5)
-      )
-      const postojeciKraj = vremeUMinute(
-        new Date(t.kraj_vreme).toTimeString().slice(0, 5)
-      )
-      // Preklapanje formula
-      return noviPocetak < postojeciKraj && noviKraj > postojeciPocetak
-    })
-  }
+  return zauzetiTermini.some((t) => {
+    const postojeciPocetak = vremeUMinute(
+      new Date(t.datum_vreme).toTimeString().slice(0, 5)
+    )
+    const postojeciKraj = vremeUMinute(
+      new Date(t.kraj_vreme).toTimeString().slice(0, 5)
+    )
+    console.log(`Proveravam ${vreme}: novi(${noviPocetak}-${noviKraj}) vs postojeci(${postojeciPocetak}-${postojeciKraj})`)
+    return noviPocetak < postojeciKraj && noviKraj > postojeciPocetak
+  })
+}
 
   useEffect(() => {
     async function fetchFrizeri() {
@@ -79,20 +79,20 @@ export default function Booking() {
   }, [selectedFrizer, selectedDatum])
 
   async function fetchZauzetiTermini() {
-    const { data, error } = await supabase
-      .from('termini')
-      .select('datum_vreme, kraj_vreme')
-      .eq('frizer_id', selectedFrizer)
-      .eq('status', 'aktivan')
-      .gte('datum_vreme', `${selectedDatum}T00:00:00`)
-      .lte('datum_vreme', `${selectedDatum}T23:59:59`)
+  const { data, error } = await supabase
+    .from('termini')
+    .select('datum_vreme, kraj_vreme')
+    .eq('frizer_id', selectedFrizer)
+    .eq('status', 'aktivan')
+    .gte('kraj_vreme', `${selectedDatum}T00:00:00+00`)
+    .lte('datum_vreme', `${selectedDatum}T23:59:59+00`)
 
-    if (!error && data) setZauzetiTermini(data)
-  }
+  if (!error && data) setZauzetiTermini(data)
+}
 
-  async function proveraPostojecegTermina() {
-  const pocetakISO = `${selectedDatum}T${selectedVreme}:00`
-  const krajDate = new Date(pocetakISO)
+async function proveraPostojecegTermina() {
+  const pocetakISO = `${selectedDatum}T${selectedVreme}:00+00`
+  const krajDate = new Date(`${selectedDatum}T${selectedVreme}:00Z`)
   krajDate.setMinutes(krajDate.getMinutes() + trajanjeMin)
   const krajISO = krajDate.toISOString()
 
@@ -104,6 +104,7 @@ export default function Booking() {
     .lt('datum_vreme', krajISO)
     .gt('kraj_vreme', pocetakISO)
 
+  console.log('Provera preklapanja:', data, error)
   return data && data.length > 0
 }
 
@@ -123,10 +124,10 @@ export default function Booking() {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  const pocetakISO = `${selectedDatum}T${selectedVreme}:00`
-  const krajDate = new Date(pocetakISO)
-  krajDate.setMinutes(krajDate.getMinutes() + trajanjeMin)
-  const krajISO = krajDate.toISOString()
+  const pocetakISO = `${selectedDatum}T${selectedVreme}:00Z`
+const krajDate = new Date(pocetakISO)
+krajDate.setMinutes(krajDate.getMinutes() + trajanjeMin)
+const krajISO = krajDate.toISOString()
 
   const { error } = await supabase.from('termini').insert({
     korisnik_id: user?.id,
