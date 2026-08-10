@@ -37,7 +37,7 @@ export default function Treatments() {
             </View>
             <TouchableOpacity
               style={styles.button}
-              onPress={() => router.push(`/booking?uslugaId=${item.id}&naziv=${item.naziv}`)}
+              onPress={() => router.push(`/booking?uslugaId=${item.id}&naziv=${item.naziv}&trajanje=${item.trajanje_min}`)} 
             >
               <Text style={styles.buttonText}>Book</Text>
             </TouchableOpacity>

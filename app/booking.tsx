@@ -10,17 +10,58 @@ type Frizer = {
   prezime: string
 }
 
+type Termin = {
+  datum_vreme: string
+  kraj_vreme: string
+}
+
 export default function Booking() {
-  const { uslugaId, naziv } = useLocalSearchParams()
+  const { uslugaId, naziv, trajanje } = useLocalSearchParams()
   const [frizeri, setFrizeri] = useState<Frizer[]>([])
   const [selectedFrizer, setSelectedFrizer] = useState<string | null>(null)
   const [selectedDatum, setSelectedDatum] = useState<string | null>(null)
   const [selectedVreme, setSelectedVreme] = useState<string | null>(null)
-  const [zauzetoVreme, setZauzetoVreme] = useState<string[]>([])
+  const [zauzetiTermini, setZauzetiTermini] = useState<Termin[]>([])
   const router = useRouter()
 
-  const svaVremena = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00']
   const danas = new Date().toISOString().split('T')[0]
+  const trajanjeMin = Number(trajanje) || 30
+
+  // Generisi sve satnice po 15 min od 09:00 do 17:00
+  function generisiSatnice() {
+    const satnice = []
+    for (let h = 9; h < 17; h++) {
+      for (let m = 0; m < 60; m += 15) {
+        // Proveri da li poslednji termin moze da stane pre 17:00
+        const ukupnoMin = h * 60 + m + trajanjeMin
+        if (ukupnoMin <= 17 * 60) {
+          satnice.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
+        }
+      }
+    }
+    return satnice
+  }
+
+  function vremeUMinute(vreme: string) {
+    const [h, m] = vreme.split(':').map(Number)
+    return h * 60 + m
+  }
+
+  function jeLiZauzeto(vreme: string) {
+    const noviPocetak = vremeUMinute(vreme)
+    const noviKraj = noviPocetak + trajanjeMin
+
+    return zauzetiTermini.some((t) => {
+      const postojeciPocetak = vremeUMinute(
+        new Date(t.datum_vreme).toTimeString().slice(0, 5)
+      )
+      const postojeciKraj = vremeUMinute(
+        new Date(t.kraj_vreme).toTimeString().slice(0, 5)
+      )
+      // Preklapanje formula
+      return noviPocetak < postojeciKraj && noviKraj > postojeciPocetak
+    })
+  }
 
   useEffect(() => {
     async function fetchFrizeri() {
@@ -32,59 +73,85 @@ export default function Booking() {
 
   useEffect(() => {
     if (selectedFrizer && selectedDatum) {
-      fetchZauzetoVreme()
+      fetchZauzetiTermini()
+      setSelectedVreme(null)
     }
   }, [selectedFrizer, selectedDatum])
 
-  async function fetchZauzetoVreme() {
-    const odDatuma = `${selectedDatum}T00:00:00`
-    const doDatuma = `${selectedDatum}T23:59:59`
-
+  async function fetchZauzetiTermini() {
     const { data, error } = await supabase
       .from('termini')
-      .select('datum_vreme')
+      .select('datum_vreme, kraj_vreme')
       .eq('frizer_id', selectedFrizer)
       .eq('status', 'aktivan')
-      .gte('datum_vreme', odDatuma)
-      .lte('datum_vreme', doDatuma)
+      .gte('datum_vreme', `${selectedDatum}T00:00:00`)
+      .lte('datum_vreme', `${selectedDatum}T23:59:59`)
 
-    if (!error && data) {
-      const zauzeto = data.map((t: any) => {
-        const d = new Date(t.datum_vreme)
-        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-      })
-      setZauzetoVreme(zauzeto)
-    }
+    if (!error && data) setZauzetiTermini(data)
   }
+
+  async function proveraPostojecegTermina() {
+  const pocetakISO = `${selectedDatum}T${selectedVreme}:00`
+  const krajDate = new Date(pocetakISO)
+  krajDate.setMinutes(krajDate.getMinutes() + trajanjeMin)
+  const krajISO = krajDate.toISOString()
+
+  const { data, error } = await supabase
+    .from('termini')
+    .select('id')
+    .eq('frizer_id', selectedFrizer)
+    .eq('status', 'aktivan')
+    .lt('datum_vreme', krajISO)
+    .gt('kraj_vreme', pocetakISO)
+
+  return data && data.length > 0
+}
 
   async function handleBooking() {
-    if (!selectedFrizer || !selectedDatum || !selectedVreme) {
-      Alert.alert('Greška', 'Molimo odaberite frizera, datum i vreme')
-      return
-    }
-
-    const { data: { user } } = await supabase.auth.getUser()
-
-    const { error } = await supabase.from('termini').insert({
-      korisnik_id: user?.id,
-      frizer_id: selectedFrizer,
-      usluga_id: uslugaId,
-      datum_vreme: `${selectedDatum}T${selectedVreme}:00`,
-      status: 'aktivan'
-    })
-
-    if (error) {
-      Alert.alert('Greška', error.message)
-    } else {
-      Alert.alert('Uspeh!', 'Termin je zakazan!', [
-        { text: 'OK', onPress: () => router.replace('/(tabs)') }
-      ])
-    }
+  if (!selectedFrizer || !selectedDatum || !selectedVreme) {
+    Alert.alert('Greška', 'Molimo odaberite frizera, datum i vreme')
+    return
   }
+
+  const postoji = await proveraPostojecegTermina()
+  if (postoji) {
+    Alert.alert('Greška', 'Ovaj termin je već zauzet, molimo odaberite drugo vreme')
+    await fetchZauzetiTermini() // osvezi satnice
+    setSelectedVreme(null)
+    return
+  }
+
+  const { data: { user } } = await supabase.auth.getUser()
+
+  const pocetakISO = `${selectedDatum}T${selectedVreme}:00`
+  const krajDate = new Date(pocetakISO)
+  krajDate.setMinutes(krajDate.getMinutes() + trajanjeMin)
+  const krajISO = krajDate.toISOString()
+
+  const { error } = await supabase.from('termini').insert({
+    korisnik_id: user?.id,
+    frizer_id: selectedFrizer,
+    usluga_id: uslugaId,
+    datum_vreme: pocetakISO,
+    kraj_vreme: krajISO,
+    status: 'aktivan'
+  })
+
+  if (error) {
+    Alert.alert('Greška', error.message)
+  } else {
+    Alert.alert('Uspeh!', 'Termin je zakazan!', [
+      { text: 'OK', onPress: () => router.replace('/(tabs)') }
+    ])
+  }
+}
+
+  const satnice = generisiSatnice()
 
   return (
     <ScrollView style={styles.container}>
       <Text style={styles.title}>Zakaži: {naziv}</Text>
+      <Text style={styles.subtitle}>Trajanje: {trajanjeMin} min</Text>
 
       {/* Odabir frizera */}
       <Text style={styles.sectionTitle}>Odaberi frizera</Text>
@@ -122,13 +189,13 @@ export default function Booking() {
         }}
       />
 
-      {/* Odabir vremena */}
+      {/* Satnice */}
       {selectedFrizer && selectedDatum && (
         <>
           <Text style={styles.sectionTitle}>Odaberi vreme</Text>
           <View style={styles.row}>
-            {svaVremena.map((v) => {
-              const zauzeto = zauzetoVreme.includes(v)
+            {satnice.map((v) => {
+              const zauzeto = jeLiZauzeto(v)
               return (
                 <TouchableOpacity
                   key={v}
@@ -163,7 +230,8 @@ export default function Booking() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 20, backgroundColor: '#f5f5f5' },
-  title: { fontSize: 22, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' },
+  title: { fontSize: 22, fontWeight: 'bold', marginBottom: 5, textAlign: 'center' },
+  subtitle: { fontSize: 14, color: '#666', textAlign: 'center', marginBottom: 15 },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', marginBottom: 10, marginTop: 15 },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
