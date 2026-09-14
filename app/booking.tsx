@@ -15,6 +15,11 @@ type Termin = {
   kraj_vreme: string
 }
 
+const RADNO_OD = 9 * 60   // 09:00 u minutima
+const RADNO_DO = 17 * 60  // 17:00 u minutima
+const KORAK = 20          // satnice na 20 min
+const BROJ_DANA_UNAPRED = 30
+
 export default function Booking() {
   const { uslugaId, naziv, trajanje } = useLocalSearchParams()
   const [frizeri, setFrizeri] = useState<Frizer[]>([])
@@ -22,149 +27,193 @@ export default function Booking() {
   const [selectedDatum, setSelectedDatum] = useState<string | null>(null)
   const [selectedVreme, setSelectedVreme] = useState<string | null>(null)
   const [zauzetiTermini, setZauzetiTermini] = useState<Termin[]>([])
+  const [loadingTermini, setLoadingTermini] = useState(false)
   const router = useRouter()
 
   const danas = new Date().toISOString().split('T')[0]
   const trajanjeMin = Number(trajanje) || 30
 
-  // Generisi sve satnice po 15 min od 09:00 do 17:00
-  function generisiSatnice() {
-    const satnice = []
-    for (let h = 9; h < 17; h++) {
-      for (let m = 0; m < 60; m += 15) {
-        // Proveri da li poslednji termin moze da stane pre 17:00
-        const ukupnoMin = h * 60 + m + trajanjeMin
-        if (ukupnoMin <= 17 * 60) {
-          satnice.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
-        }
-      }
-    }
-    return satnice
+  function minuteUVreme(min: number) {
+    const h = Math.floor(min / 60)
+    const m = min % 60
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
   }
 
-  function vremeUMinute(vreme: string) {
-    const [h, m] = vreme.split(':').map(Number)
-    return h * 60 + m
+  // Formatira Date objekat u lokalni YYYY-MM-DD string (isti format koji koristi Calendar)
+  function lokalniDatumString(d: Date) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   }
 
-  function jeLiZauzeto(vreme: string) {
-  const noviPocetak = vremeUMinute(vreme)
-  const noviKraj = noviPocetak + trajanjeMin
-
-  return zauzetiTermini.some((t) => {
-    const postojeciPocetak = vremeUMinute(
-      new Date(t.datum_vreme).toTimeString().slice(0, 5)
-    )
-    const postojeciKraj = vremeUMinute(
-      new Date(t.kraj_vreme).toTimeString().slice(0, 5)
-    )
-    console.log(`Proveravam ${vreme}: novi(${noviPocetak}-${noviKraj}) vs postojeci(${postojeciPocetak}-${postojeciKraj})`)
-    return noviPocetak < postojeciKraj && noviKraj > postojeciPocetak
-  })
-}
-
+  // Dohvati frizere koji rade odabranu uslugu
   useEffect(() => {
     async function fetchFrizeri() {
-      const { data, error } = await supabase.from('frizeri').select('*')
-      if (!error) setFrizeri(data)
+      const { data, error } = await supabase
+        .from('frizer_usluge')
+        .select('frizer_id, frizeri(id, ime, prezime)')
+        .eq('usluga_id', uslugaId)
+
+      if (!error && data) {
+        const lista = data.map((d: any) => d.frizeri).filter(Boolean)
+        setFrizeri(lista)
+      }
     }
     fetchFrizeri()
-  }, [])
+  }, [uslugaId])
 
+  // Dohvati SVE termine frizera za narednih 30 dana (jednom, kad se izabere frizer)
   useEffect(() => {
-    if (selectedFrizer && selectedDatum) {
-      fetchZauzetiTermini()
+    if (selectedFrizer) {
+      fetchZauzetiTermini(selectedFrizer)
+      setSelectedDatum(null)
       setSelectedVreme(null)
     }
-  }, [selectedFrizer, selectedDatum])
+  }, [selectedFrizer])
 
-  async function fetchZauzetiTermini() {
-  const { data, error } = await supabase
-    .from('termini')
-    .select('datum_vreme, kraj_vreme')
-    .eq('frizer_id', selectedFrizer)
-    .eq('status', 'aktivan')
-    .gte('kraj_vreme', `${selectedDatum}T00:00:00+00`)
-    .lte('datum_vreme', `${selectedDatum}T23:59:59+00`)
+  async function fetchZauzetiTermini(frizerId: string) {
+    setLoadingTermini(true)
+    const sada = new Date()
+    const krajOpsega = new Date(sada.getTime() + BROJ_DANA_UNAPRED * 86400000)
 
-  if (!error && data) setZauzetiTermini(data)
-}
+    const { data, error } = await supabase
+      .from('termini')
+      .select('datum_vreme, kraj_vreme')
+      .eq('frizer_id', frizerId)
+      .eq('status', 'aktivan')
+      .gte('kraj_vreme', sada.toISOString())
+      .lte('datum_vreme', krajOpsega.toISOString())
 
-async function proveraPostojecegTermina() {
-  const pocetakISO = `${selectedDatum}T${selectedVreme}:00+00`
-  const krajDate = new Date(`${selectedDatum}T${selectedVreme}:00Z`)
-  krajDate.setMinutes(krajDate.getMinutes() + trajanjeMin)
-  const krajISO = krajDate.toISOString()
+    if (!error && data) setZauzetiTermini(data)
+    setLoadingTermini(false)
+  }
 
-  const { data, error } = await supabase
-    .from('termini')
-    .select('id')
-    .eq('frizer_id', selectedFrizer)
-    .eq('status', 'aktivan')
-    .lt('datum_vreme', krajISO)
-    .gt('kraj_vreme', pocetakISO)
+  // Generiši slobodne satnice za odabrani dan (preklapanje se proverava ovde)
+  function slobodneSatniceZaDan(datum: string) {
+    const terminiTogDana = zauzetiTermini.filter((t) => {
+      const d = new Date(t.datum_vreme)
+      return lokalniDatumString(d) === datum
+    })
 
-  console.log('Provera preklapanja:', data, error)
-  return data && data.length > 0
-}
+    const sada = new Date()
+    const jeIstiDan = lokalniDatumString(sada) === datum
+    const trenutneMinute = sada.getHours() * 60 + sada.getMinutes()
+
+    const slobodne: string[] = []
+    for (let min = RADNO_OD; min + trajanjeMin <= RADNO_DO; min += KORAK) {
+      const noviPocetak = min
+      const noviKraj = min + trajanjeMin
+
+      // Preskoči satnice koje su već prošle (samo za današnji dan)
+      if (jeIstiDan && noviPocetak <= trenutneMinute) continue
+
+      const preklapaSe = terminiTogDana.some((t) => {
+        const pocetakD = new Date(t.datum_vreme)
+        const krajD = new Date(t.kraj_vreme)
+        // Lokalni sati/minuti — poklapaju se sa lokalnim radnim vremenom
+        const postojeciPocetak = pocetakD.getHours() * 60 + pocetakD.getMinutes()
+        const postojeciKraj = krajD.getHours() * 60 + krajD.getMinutes()
+        return noviPocetak < postojeciKraj && noviKraj > postojeciPocetak
+      })
+
+      if (!preklapaSe) slobodne.push(minuteUVreme(min))
+    }
+    return slobodne
+  }
+
+  // Napravi markirane datume za kalendar (zelena tacka = ima slobodnih, crvena = popunjeno)
+  function generisiMarkedDates() {
+    const marked: any = {}
+    const danasD = new Date()
+
+    for (let i = 0; i < BROJ_DANA_UNAPRED; i++) {
+      const d = new Date()
+      d.setDate(danasD.getDate() + i)
+      const datumStr = lokalniDatumString(d)
+
+      const slobodne = slobodneSatniceZaDan(datumStr)
+      marked[datumStr] = {
+        marked: true,
+        dotColor: slobodne.length > 0 ? '#2D6A4F' : '#D64545',
+      }
+    }
+
+    if (selectedDatum) {
+      marked[selectedDatum] = {
+        ...marked[selectedDatum],
+        selected: true,
+        selectedColor: '#2D6A4F',
+      }
+    }
+
+    return marked
+  }
+
+  async function proveraPostojecegTermina(pocetakISO: string, krajISO: string) {
+    const { data, error } = await supabase
+      .from('termini')
+      .select('id')
+      .eq('frizer_id', selectedFrizer)
+      .eq('status', 'aktivan')
+      .lt('datum_vreme', krajISO)
+      .gt('kraj_vreme', pocetakISO)
+
+    return !!data && data.length > 0
+  }
 
   async function handleBooking() {
-  if (!selectedFrizer || !selectedDatum || !selectedVreme) {
-    Alert.alert('Greška', 'Molimo odaberite frizera, datum i vreme')
-    return
+    if (!selectedFrizer || !selectedDatum || !selectedVreme) {
+      Alert.alert('Greška', 'Molimo odaberite frizera, datum i vreme')
+      return
+    }
+
+    // Kreirano kao lokalno vreme; toISOString() ga automatski konvertuje u UTC
+    const pocetakDate = new Date(`${selectedDatum}T${selectedVreme}:00`)
+    const krajDate = new Date(pocetakDate.getTime() + trajanjeMin * 60000)
+
+    const pocetakISO = pocetakDate.toISOString()
+    const krajISO = krajDate.toISOString()
+
+    const postoji = await proveraPostojecegTermina(pocetakISO, krajISO)
+    if (postoji) {
+      Alert.alert('Greška', 'Ovaj termin je upravo zauzet, molimo odaberite drugo vreme')
+      await fetchZauzetiTermini(selectedFrizer)
+      setSelectedVreme(null)
+      return
+    }
+
+    const { data: { user } } = await supabase.auth.getUser()
+
+    const { error } = await supabase.from('termini').insert({
+      korisnik_id: user?.id,
+      frizer_id: selectedFrizer,
+      usluga_id: uslugaId,
+      datum_vreme: pocetakISO,
+      kraj_vreme: krajISO,
+      status: 'aktivan',
+    })
+
+    if (error) {
+      Alert.alert('Greška', error.message)
+    } else {
+      Alert.alert('Uspeh!', 'Termin je zakazan!', [
+        { text: 'OK', onPress: () => router.replace('/(tabs)') },
+      ])
+    }
   }
 
-  const postoji = await proveraPostojecegTermina()
-  if (postoji) {
-    Alert.alert('Greška', 'Ovaj termin je već zauzet, molimo odaberite drugo vreme')
-    await fetchZauzetiTermini() // osvezi satnice
-    setSelectedVreme(null)
-    return
-  }
-
-  const { data: { user } } = await supabase.auth.getUser()
-
-  const pocetakISO = `${selectedDatum}T${selectedVreme}:00Z`
-const krajDate = new Date(pocetakISO)
-krajDate.setMinutes(krajDate.getMinutes() + trajanjeMin)
-const krajISO = krajDate.toISOString()
-
-  const { error } = await supabase.from('termini').insert({
-    korisnik_id: user?.id,
-    frizer_id: selectedFrizer,
-    usluga_id: uslugaId,
-    datum_vreme: pocetakISO,
-    kraj_vreme: krajISO,
-    status: 'aktivan'
-  })
-
-  if (error) {
-    Alert.alert('Greška', error.message)
-  } else {
-    Alert.alert('Uspeh!', 'Termin je zakazan!', [
-      { text: 'OK', onPress: () => router.replace('/(tabs)') }
-    ])
-  }
-}
-
-  const satnice = generisiSatnice()
+  const slobodneSatnice = selectedDatum ? slobodneSatniceZaDan(selectedDatum) : []
 
   return (
     <ScrollView style={styles.container}>
       <Text style={styles.title}>Zakaži: {naziv}</Text>
       <Text style={styles.subtitle}>Trajanje: {trajanjeMin} min</Text>
 
-      {/* Odabir frizera */}
       <Text style={styles.sectionTitle}>Odaberi frizera</Text>
       <View style={styles.row}>
         {frizeri.map((f) => (
           <TouchableOpacity
             key={f.id}
             style={[styles.chip, selectedFrizer === f.id && styles.chipSelected]}
-            onPress={() => {
-              setSelectedFrizer(f.id)
-              setSelectedVreme(null)
-            }}
+            onPress={() => setSelectedFrizer(f.id)}
           >
             <Text style={[styles.chipText, selectedFrizer === f.id && styles.chipTextSelected]}>
               {f.ime} {f.prezime}
@@ -172,53 +221,47 @@ const krajISO = krajDate.toISOString()
           </TouchableOpacity>
         ))}
       </View>
+      {frizeri.length === 0 && (
+        <Text style={styles.info}>Nijedan frizer trenutno ne nudi ovu uslugu.</Text>
+      )}
 
-      {/* Kalendar */}
-      <Text style={styles.sectionTitle}>Odaberi datum</Text>
-      <Calendar
-        minDate={danas}
-        onDayPress={(day: any) => {
-          setSelectedDatum(day.dateString)
-          setSelectedVreme(null)
-        }}
-        markedDates={selectedDatum ? {
-          [selectedDatum]: { selected: true, selectedColor: '#2D6A4F' }
-        } : {}}
-        theme={{
-          todayTextColor: '#2D6A4F',
-          arrowColor: '#2D6A4F',
-        }}
-      />
+      {selectedFrizer && !loadingTermini && (
+        <>
+          <Text style={styles.sectionTitle}>Odaberi datum</Text>
+          <Text style={styles.legenda}>🟢 ima slobodnih termina 🔴 popunjeno</Text>
+          <Calendar
+            minDate={danas}
+            maxDate={new Date(Date.now() + BROJ_DANA_UNAPRED * 86400000).toISOString().split('T')[0]}
+            onDayPress={(day: any) => {
+              setSelectedDatum(day.dateString)
+              setSelectedVreme(null)
+            }}
+            markedDates={generisiMarkedDates()}
+            theme={{ todayTextColor: '#2D6A4F', arrowColor: '#2D6A4F' }}
+          />
+        </>
+      )}
 
-      {/* Satnice */}
-      {selectedFrizer && selectedDatum && (
+      {selectedDatum && (
         <>
           <Text style={styles.sectionTitle}>Odaberi vreme</Text>
-          <View style={styles.row}>
-            {satnice.map((v) => {
-              const zauzeto = jeLiZauzeto(v)
-              return (
+          {slobodneSatnice.length === 0 ? (
+            <Text style={styles.info}>Nema slobodnih termina za ovaj dan.</Text>
+          ) : (
+            <View style={styles.row}>
+              {slobodneSatnice.map((v) => (
                 <TouchableOpacity
                   key={v}
-                  disabled={zauzeto}
-                  style={[
-                    styles.chip,
-                    selectedVreme === v && styles.chipSelected,
-                    zauzeto && styles.chipDisabled,
-                  ]}
+                  style={[styles.chip, selectedVreme === v && styles.chipSelected]}
                   onPress={() => setSelectedVreme(v)}
                 >
-                  <Text style={[
-                    styles.chipText,
-                    selectedVreme === v && styles.chipTextSelected,
-                    zauzeto && styles.chipTextDisabled,
-                  ]}>
+                  <Text style={[styles.chipText, selectedVreme === v && styles.chipTextSelected]}>
                     {v}
                   </Text>
                 </TouchableOpacity>
-              )
-            })}
-          </View>
+              ))}
+            </View>
+          )}
         </>
       )}
 
@@ -234,6 +277,8 @@ const styles = StyleSheet.create({
   title: { fontSize: 22, fontWeight: 'bold', marginBottom: 5, textAlign: 'center' },
   subtitle: { fontSize: 14, color: '#666', textAlign: 'center', marginBottom: 15 },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', marginBottom: 10, marginTop: 15 },
+  legenda: { fontSize: 12, color: '#666', marginBottom: 8 },
+  info: { fontSize: 14, color: '#999', fontStyle: 'italic', marginTop: 5 },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     paddingHorizontal: 14,
@@ -244,10 +289,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   chipSelected: { backgroundColor: '#2D6A4F' },
-  chipDisabled: { backgroundColor: '#e0e0e0', borderColor: '#ccc' },
   chipText: { color: '#2D6A4F', fontWeight: '500' },
   chipTextSelected: { color: '#fff' },
-  chipTextDisabled: { color: '#aaa' },
   bookButton: {
     backgroundColor: '#2D6A4F',
     padding: 15,
