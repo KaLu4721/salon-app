@@ -1,6 +1,5 @@
-import { useRouter } from 'expo-router'
 import { useEffect, useState } from 'react'
-import { Button, FlatList, StyleSheet, Text, View } from 'react-native'
+import { FlatList, StyleSheet, Text, View } from 'react-native'
 import { supabase } from '../../lib/supabase'
 
 type Usluga = {
@@ -12,7 +11,6 @@ type Usluga = {
 
 export default function Home() {
   const [usluge, setUsluge] = useState<Usluga[]>([])
-  const router = useRouter()
 
   useEffect(() => {
     async function fetchUsluge() {
@@ -21,11 +19,6 @@ export default function Home() {
     }
     fetchUsluge()
   }, [])
-
-  async function handleLogout() {
-    await supabase.auth.signOut()
-    router.replace('/login')
-  }
 
   return (
     <View style={styles.container}>
@@ -41,7 +34,6 @@ export default function Home() {
           </View>
         )}
       />
-      <Button title="Odjavi se" onPress={handleLogout} />
     </View>
   )
 }
