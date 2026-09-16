@@ -1,4 +1,4 @@
-import { useLocalSearchParams, useRouter } from 'expo-router'
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useState } from 'react'
 import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import { Calendar } from 'react-native-calendars'
@@ -210,6 +210,7 @@ export default function Booking() {
 
   return (
     <ScrollView style={styles.container}>
+      <Stack.Screen options={{ headerBackTitle: 'Nazad' }} />
       <Text style={styles.title}>Zakaži: {naziv}</Text>
       <Text style={styles.subtitle}>Trajanje: {trajanjeMin} min</Text>
 

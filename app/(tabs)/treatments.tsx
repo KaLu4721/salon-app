@@ -24,7 +24,7 @@ export default function Treatments() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Our Treatments</Text>
+      <Text style={styles.title}>Usluge</Text>
       <FlatList
         data={usluge}
         keyExtractor={(item) => item.id}
@@ -39,7 +39,7 @@ export default function Treatments() {
               style={styles.button}
               onPress={() => router.push(`/booking?uslugaId=${item.id}&naziv=${item.naziv}&trajanje=${item.trajanje_min}`)} 
             >
-              <Text style={styles.buttonText}>Book</Text>
+              <Text style={styles.buttonText}>Zakaži</Text>
             </TouchableOpacity>
           </View>
         )}
