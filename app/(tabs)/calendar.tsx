@@ -19,6 +19,7 @@ export default function Calendar() {
   const [selectedDatum, setSelectedDatum] = useState<string>(
     new Date().toISOString().split('T')[0]
   )
+  const danas = new Date().toISOString().split('T')[0]
 
   function lokalniDatumString(d: Date) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -30,7 +31,6 @@ export default function Calendar() {
   }
 
   async function fetchTermini() {
-    setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       setLoading(false)
@@ -42,6 +42,7 @@ export default function Calendar() {
       .select('id, datum_vreme, kraj_vreme, status, usluge(naziv, cena), frizeri(ime, prezime)')
       .eq('korisnik_id', user.id)
       .eq('status', 'aktivan')
+      .gte('datum_vreme', new Date().toISOString())
       .order('datum_vreme', { ascending: true })
 
     if (!error && data) {
@@ -118,9 +119,11 @@ export default function Calendar() {
       <Text style={styles.title}>Moji termini</Text>
 
       <RNCalendar
+        minDate={danas}
+        disableAllTouchEventsForDisabledDays
         onDayPress={(day: any) => setSelectedDatum(day.dateString)}
         markedDates={generisiMarkedDates()}
-        theme={{ todayTextColor: '#2D6A4F', arrowColor: '#2D6A4F' }}
+        theme={{ todayTextColor: '#2D6A4F', arrowColor: '#2D6A4F', textDisabledColor: '#c4c4c4' }}
       />
 
       <Text style={styles.sectionTitle}>

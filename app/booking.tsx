@@ -69,20 +69,22 @@ export default function Booking() {
     }
   }, [selectedFrizer])
 
+  // Koristi RPC funkciju (get_zauzeta_vremena) umesto direktnog .from('termini').select(),
+  // jer nakon uključivanja RLS-a korisnik ne sme da čita tuđe termine direktno.
+  // Funkcija je SECURITY DEFINER i vraća samo vremena, bez korisnik_id.
   async function fetchZauzetiTermini(frizerId: string) {
     setLoadingTermini(true)
     const sada = new Date()
     const krajOpsega = new Date(sada.getTime() + BROJ_DANA_UNAPRED * 86400000)
 
-    const { data, error } = await supabase
-      .from('termini')
-      .select('datum_vreme, kraj_vreme')
-      .eq('frizer_id', frizerId)
-      .eq('status', 'aktivan')
-      .gte('kraj_vreme', sada.toISOString())
-      .lte('datum_vreme', krajOpsega.toISOString())
+    const { data, error } = await supabase.rpc('get_zauzeta_vremena', {
+      p_frizer_id: frizerId,
+      p_od: sada.toISOString(),
+      p_do: krajOpsega.toISOString(),
+    })
 
     if (!error && data) setZauzetiTermini(data)
+    else if (error) console.log('Greška pri dohvatanju zauzetih termina:', error)
     setLoadingTermini(false)
   }
 
@@ -147,16 +149,20 @@ export default function Booking() {
     return marked
   }
 
+  // Koristi RPC funkciju (postoji_preklapanje) iz istog razloga kao gore —
+  // klijent ne sme direktno da čita tuđe termine iz 'termini' tabele kad je RLS uključen.
   async function proveraPostojecegTermina(pocetakISO: string, krajISO: string) {
-    const { data, error } = await supabase
-      .from('termini')
-      .select('id')
-      .eq('frizer_id', selectedFrizer)
-      .eq('status', 'aktivan')
-      .lt('datum_vreme', krajISO)
-      .gt('kraj_vreme', pocetakISO)
+    const { data, error } = await supabase.rpc('postoji_preklapanje', {
+      p_frizer_id: selectedFrizer,
+      p_pocetak: pocetakISO,
+      p_kraj: krajISO,
+    })
 
-    return !!data && data.length > 0
+    if (error) {
+      console.log('Greška pri proveri preklapanja:', error)
+      return false
+    }
+    return !!data
   }
 
   async function handleBooking() {
